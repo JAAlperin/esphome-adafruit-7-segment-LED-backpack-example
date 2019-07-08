@@ -1,0 +1,138 @@
+esphome:
+  name: nodemcu-7seg
+  platform: ESP8266
+  board: nodemcuv2
+  arduino_version: latest
+  includes: # get from github link below and put into /config/esphome
+    # https://learn.adafruit.com/adafruit-led-backpack/0-dot-56-seven-segment-backpack
+    # https://learn.adafruit.com/adafruit-led-backpack/downloads
+    # https://github.com/adafruit/Adafruit_LED_Backpack
+    - Adafruit_LEDBackpack.h
+    - Adafruit_LEDBackpack.cpp
+  libraries:
+    - "Adafruit GFX Library"
+    - "SPI"  # unused dependency
+  
+logger: {}
+
+api:
+  password: password
+  # this is enough to get sensor data updated.
+  # if also configured as an espHome integration I got duplicate sensor notifications
+  
+ota:
+  password: password
+  safe_mode: true
+
+wifi:
+  ssid: ddwrt2G
+  password: 'password'
+  domain: .local.lan
+  manual_ip:
+    static_ip: 192.168.0.xxx
+    gateway: 192.168.0.1
+    subnet: 255.255.255.0
+
+switch: # controls the LED on the nodemcu8266 (to find it)
+  - platform: gpio
+    name: "nodemcu-7seg LED"
+    pin:
+      number: D0
+      inverted: yes
+      
+globals: # to share data between lambdas
+  - id: temp
+    type: int
+    # restore_value: no default
+    # initial_value: '0' default
+  - id: humid
+    type: int
+   
+sensor:
+  - platform: homeassistant
+    id: humidity
+    internal: True
+    entity_id: sensor.dark_sky_humidity_rounded
+     # template sensor value_template: >- {{ states("sensor.dark_sky_humidity")|round(0) }}
+    on_value:
+      then:
+        - lambda: |-
+              id(humid) = x<100 ? x*100 : 9900;
+              // shift left two digits and keep at two digits
+  - platform: homeassistant
+    id: temperature
+    internal: True
+    entity_id: sensor.motion_sensor_temperature_rounded
+    # template sensor value_template: >- {{ states("sensor.motion_sensor_temperature")|round(0) }}
+    on_value:
+      then:
+        - lambda: |-
+              id(temp) = x*10; // shift left and save for later
+  - platform: homeassistant
+    #name: "time7seg"
+    id: time7seg
+    internal: True
+    entity_id: sensor.time7seg
+    # template sensor value_template: >- {{states.sensor.time.state.replace(":","") | int }}
+    # each new minute show time, temperature, humidity, and time
+    on_value:
+      then:
+        - lambda: |-
+              static Adafruit_7segment matrix = Adafruit_7segment();
+              matrix.begin(0x70);
+              static int p;
+              static unsigned char d;
+              static bool pm;
+              pm = (x > 1159);
+              if (x<100) {
+                p = x+1200;
+                d = 0b0000110; // segs 2,3 = numeral 1
+              } else if (x<1000) {
+                p = x+1000;
+                d = 0b00000000; // blank
+              } else if (x<1300) {
+                p = x;
+                d = 0b0000110;
+              } else {
+                p = x-200;
+                if (x<2200) {
+                  d = 0b00000000;
+                } else {
+                  d = 0b0000110;
+                }
+              }
+              matrix.print(p);
+              // clear left didgit if hour < 10
+              matrix.writeDigitRaw(0, d);
+              // add decimal point to right digit for PM
+              matrix.writeDigitNum(4, p % 10, pm);
+              matrix.drawColon(1);
+              matrix.writeDisplay();
+              delay(3000);
+              matrix.print(id(temp));
+              matrix.writeDigitRaw(4, 0b01100011);
+              matrix.writeDisplay();
+              delay(5000);
+              matrix.print(id(humid));
+              // % one char
+              //matrix.writeDigitRaw(4, 0b01010010);
+              // PC
+              //matrix.writeDigitRaw(3, 0b01110011);
+              //matrix.writeDigitRaw(4, 0b01011000);
+              // % two char
+              matrix.writeDigitRaw(3, 0b01100011);
+              matrix.writeDigitRaw(4, 0b01011100);
+              matrix.writeDisplay();
+              delay(5000);
+              matrix.print(p);
+              matrix.writeDigitRaw(0, d);
+              matrix.writeDigitNum(4, p % 10, pm);
+              matrix.drawColon(1);
+              matrix.writeDisplay();
+
+i2c:
+  sda: 4  # data  = D2 = GPIO4
+  scl: 5  # clock = D1 = GPIO5
+  scan: False # Adafruit uses 0x70
+
+
